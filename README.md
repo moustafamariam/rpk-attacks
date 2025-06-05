@@ -27,4 +27,4 @@ This repository contains the ProVerif models of the SSH, IPsec, and TLS protocol
 - [TLS with self-signed certificates solution](TLS-RPK/TLS-RPK-DANE-SS.pv): This is a model of the solution where the server sends its self-signed certificate to the client.
 
 ### Attack traces
-- The [attack-traces](attack-trace/) folder contains the attacks detected by Proverif for the protocols. ProVerif was able to find attack traces for the attacks implemented in the paper.
+- The [attack-traces](attack-traces/) folder contains the attacks detected by Proverif for the protocols. ProVerif was able to find attack traces for the attacks implemented in the paper.
