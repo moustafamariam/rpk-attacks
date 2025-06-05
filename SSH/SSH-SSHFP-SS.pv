@@ -1,0 +1,258 @@
+(* ===== DATA TYPES ===== *)
+
+type Id_t.        
+type Random_t.    (* Nonce *)
+type e_t.         (* DH exponent *)
+type G_t.         (* DH group *)
+type K_t.         (* Symmetric key *)
+type PK_t.        (* Public key *)
+type SK_t.        (* Private key *)
+type MAC_t.       (* MAC *)
+type Sig_t.       (* Signature *)
+type Cert_t.      (* Certificate *)
+type Tag_t.       (* Message type tag *)
+type RR_t.         (* DNS Resource Record type *)
+
+(* ===== CHANNELS ===== *)
+
+(* Public channel *)
+free c:channel.
+
+(* ===== TABLES ===== *)
+table trusted_domains(Id_t, K_t).
+table raw_public_keys(SK_t, PK_t).
+table trusted_clients(Id_t, PK_t).
+
+(* ===== CONSTANTS ===== *)
+
+(* CA secret key *)
+const SK_CA:SK_t [private].
+
+(* DH generator *)
+const G:G_t.
+
+(* DNS *)
+const SSHFP: RR_t.
+
+(* Dummy value *)
+const DUMMY: Id_t.
+const ZERO: bitstring.
+const DUMMY_CERT: Cert_t.
+
+(* SSH Constants *)
+const SSH_PROTOV_SWV: bitstring.
+const SSH_MSG_KEXINIT: bitstring.
+const ALGOS: bitstring.
+const SSH_MSG_KEXDH_INIT: bitstring.
+const SSH_MSG_KEXDH_REPLY: bitstring.
+
+
+
+
+(* ===== FUNCTIONS ===== *)
+
+(* Generate a public key from a private key *)
+fun make_pk(SK_t): PK_t.
+
+
+(* Sign a certificate with a private key *)
+fun signcert(Id_t,PK_t,SK_t): Cert_t.
+
+reduc forall id:Id_t,pk:PK_t,sk:SK_t;
+  checkcert(signcert(id,pk,sk),make_pk(sk)) = (id,pk)
+.
+
+(* Create a certificate *)
+letfun certificate(id:Id_t,pk:PK_t) =
+  signcert(id,pk,SK_CA)
+.
+
+(* Sign a bitstring with a private key *)
+fun sign(bitstring,SK_t): Sig_t.
+reduc forall bs:bitstring, sk:SK_t;
+  checksign(sign(bs,sk),make_pk(sk)) = bs
+.
+
+(* Authenticated encryption/decryption *)
+fun enc(bitstring,K_t): bitstring.
+reduc forall k:K_t, m:bitstring;
+  dec(enc(m,k),k) = m
+.
+
+(* Authentication without encryption *)
+fun auth(bitstring,K_t): bitstring.
+reduc forall k:K_t, m:bitstring;
+  verify(auth(m,k),k) = m
+.
+reduc forall k:K_t, m:bitstring;
+  open(auth(m,k)) = m
+.
+
+(* Diffie-Hellman key exchange *)
+fun DH(e_t,G_t): G_t.
+equation forall x:e_t, y:e_t;
+  DH(y,DH(x,G)) = DH(x,DH(y,G))
+.
+
+(* MAC *)
+fun mac(bitstring,K_t): MAC_t.
+
+(* Hash *)
+fun hash(bitstring): bitstring.
+fun key_hash(PK_t): bitstring.
+fun cert_hash(Cert_t): bitstring.
+
+
+fun toG(bitstring): G_t [typeConverter].
+fun toBS(G_t): bitstring [typeConverter].
+
+
+
+(* ===== EVENTS ===== *)
+
+event DNSUpdate(Id_t,bitstring).
+event HonestDNSUpdate(Id_t,bitstring).
+event CompromiseDomain(Id_t).
+event ServerKEXReply(Id_t, G_t).
+event ClientKEXComplete(Id_t, Id_t, G_t).
+event Test(Id_t).
+
+(* ===== QUERIES ===== *)
+
+(* DNS update sanity check *)
+query domain:Id_t, chash:bitstring; event(DNSUpdate(domain, chash)) ==> event(HonestDNSUpdate(domain, chash)) || event(CompromiseDomain(domain)).
+
+(* Authentication of server to client *)
+query client_id,server_domain:Id_t, key:G_t; event(ClientKEXComplete(client_id, server_domain, key)) ==> inj-event(ServerKEXReply(server_domain, key)) || event(CompromiseDomain(server_domain)).
+query client_id,server_domain, server_domain':Id_t, key:G_t; event(ServerKEXReply(server_domain, key)) && event(ClientKEXComplete(client_id, server_domain', key)) ==> server_domain=server_domain' || event(CompromiseDomain(server_domain)).
+
+(* Reachability *)
+query client_id,server_domain:Id_t, key:G_t; event(ClientKEXComplete(client_id, server_domain, key)) ==> event(CompromiseDomain(server_domain)).
+query server_domain:Id_t, key:G_t; event(ServerKEXReply(server_domain, key)) ==> event(CompromiseDomain(server_domain)).
+
+(* query domain:Id_t; event(Test(domain)) ==> event(CompromiseDomain(domain)). *)
+
+
+(* ===== PROCESSES ===== *)
+
+let client(dns_pk:PK_t, id:Id_t, sk:SK_t) = 
+
+    in(c, SSHFP_record:Sig_t);
+    let (server_domain:Id_t, =SSHFP, chash:bitstring) = checksign(SSHFP_record, dns_pk) in
+      
+    (* identification string *)
+    let V_C = SSH_PROTOV_SWV in
+    out(c, V_C);
+    in(c, V_S:bitstring);
+    if V_S = SSH_PROTOV_SWV then
+
+    (* SSH_MSG_KEXINIT *)
+    new client_cookie:Random_t;
+    let I_C = (SSH_MSG_KEXINIT, client_cookie, ALGOS) in
+    out(c, I_C);
+    in(c, I_S:bitstring);
+    let (=SSH_MSG_KEXINIT, server_cookie:Random_t, =ALGOS) = I_S in
+
+    (* Diffie-Hellman Key Exchange *)
+    new x:e_t;
+    let e = DH(x, G) in
+    out(c, (SSH_MSG_KEXDH_INIT, e));
+    in(c, server_dhkex_reply:bitstring);
+    let (=SSH_MSG_KEXDH_REPLY, server_dhkex_reply:bitstring) = server_dhkex_reply in
+    let (K_S:bitstring, f:G_t, s:Sig_t) = server_dhkex_reply in
+
+    (* Check self-signed certificate *)
+    let (spk:PK_t, ss_cert:Cert_t) = K_S in
+    let (=server_domain, =spk) = checkcert(ss_cert, spk) in
+
+    if cert_hash(ss_cert) = chash then (* Check cert hash from SSHFP record *)
+    let K = DH(x, f) in
+    let H = hash((V_C, V_S, I_C, I_S, K_S, e, f, K)) in
+    if H = checksign(s, spk) then
+    event ClientKEXComplete(id, server_domain, K);
+
+    0.
+
+
+let server(domain:Id_t, sk:SK_t) = 
+
+    
+    let pk = make_pk(sk) in
+    let ss_cert = DUMMY_CERT in
+    let ss_cert = signcert(domain, pk, sk) in 
+
+    (* server public host key and certificates (K_S) *)
+    let K_S = (pk, ss_cert) in
+
+    (* identification string *)
+    in(c, V_C:bitstring);
+    if V_C = SSH_PROTOV_SWV then
+    let V_S = SSH_PROTOV_SWV in
+    out(c, V_S);
+
+    (* SSH_MSG_KEXINIT *)
+    in(c, I_C:bitstring);
+    let (=SSH_MSG_KEXINIT, client_cookie:Random_t, =ALGOS) = I_C in
+    new server_cookie:Random_t;
+    let I_S = (SSH_MSG_KEXINIT, server_cookie, ALGOS) in
+    out(c, I_S);
+
+    (* Diffie-Hellman Key Exchange *)
+    in(c, client_dhkex_init:bitstring);
+    let (=SSH_MSG_KEXDH_INIT, e:G_t) = client_dhkex_init in
+    new y:e_t;
+    let f = DH(y, G) in
+    let K = DH(y, e) in
+    let H = hash((V_C, V_S, I_C, I_S, K_S, e, f, K)) in
+    let s = sign(H, sk) in
+    event ServerKEXReply(domain, K);
+    out(c, (SSH_MSG_KEXDH_REPLY, K_S, f, s));
+
+    0.
+
+
+  let server_init() = 
+
+    (* Create trusted_domains, domain can have many PKs *)
+    !( 
+      new domain: Id_t; out(c, domain);
+      new credentials: K_t; 
+      insert trusted_domains(domain, credentials);
+      (* Honest registration of raw public keys to domains in DNS *)
+       !( new sk:SK_t; let rpk = make_pk(sk) in out(c, rpk);
+      let ss_cert = signcert(domain, rpk, sk) in 
+      let dns_update = (domain, SSHFP, cert_hash(ss_cert)) in
+      event HonestDNSUpdate(domain, cert_hash(ss_cert));
+      out(c, auth(dns_update, credentials));
+      (* Launch servers *)
+      !server(domain, sk) )
+      | 
+      ( event CompromiseDomain(domain); out(c, credentials) )
+    ).
+
+let client_init(dns_pk:PK_t) = 
+
+    (* Create key pairs, each client id maps to one secret key *)
+    !( new id:Id_t; 
+      new sk:SK_t; let pk = make_pk(sk) in out(c, pk);
+      insert trusted_clients(id, pk);
+      !client(dns_pk, id, sk)
+      ).
+
+
+
+let dns(dns_sk:SK_t, dns_pk:PK_t) = 
+    in(c, SSHFP_update_record: bitstring);
+    let (domain:Id_t, =SSHFP, chash:bitstring) = open(SSHFP_update_record) in
+    get trusted_domains(=domain, credentials:K_t) in
+    let (=domain, =SSHFP, =chash) = verify(SSHFP_update_record, credentials) in
+    event DNSUpdate(domain, chash);
+    out(c, sign((domain, SSHFP, chash), dns_sk));
+    0.
+
+process 
+    new dns_sk:SK_t;
+    let dns_pk = make_pk(dns_sk) in
+    out(c, dns_pk);
+
+    !dns(dns_sk, dns_pk) | !client_init(dns_pk) | !server_init() 

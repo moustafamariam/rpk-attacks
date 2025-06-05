@@ -1,0 +1,293 @@
+(* ===== DATA TYPES ===== *)
+
+type Id_t.        
+type Random_t.    (* Nonce *)
+type e_t.         (* DH exponent *)
+type G_t.         (* DH group *)
+type K_t.         (* Symmetric key *)
+type PK_t.        (* Public key *)
+type SK_t.        (* Private key *)
+type MAC_t.       (* MAC *)
+type Sig_t.       (* Signature *)
+type Cert_t.      (* Certificate *)
+type Tag_t.       (* Message type tag *)
+type RR_t.         (* DNS Resource Record type *)
+
+(* ===== CHANNELS ===== *)
+
+(* Public channel *)
+free c:channel.
+
+(* ===== TABLES ===== *)
+table trusted_domains(Id_t, K_t).
+table raw_public_keys(SK_t, PK_t).
+table trusted_clients(Id_t, PK_t).
+
+(* ===== CONSTANTS ===== *)
+
+(* CA secret key *)
+const SK_CA:SK_t [private].
+
+(* DH generator *)
+const G:G_t.
+
+(* DNS *)
+const IPSECKEY: RR_t.
+
+(* Dummy value *)
+const DUMMY: Id_t.
+const ZERO: bitstring.
+
+(* IKEv2 Constants *)
+const ALGOS: bitstring.
+(* Key Constants *)
+const ONE,TWO,THREE,FOUR,FIVE: bitstring.
+const SRC_IP: bitstring.
+const DEST_IP: bitstring.
+
+
+(* ===== FUNCTIONS ===== *)
+
+(* Generate a public key from a private key *)
+fun make_pk(SK_t): PK_t.
+
+
+(* Sign a certificate with a private key *)
+fun signcert(Id_t,PK_t,SK_t): Cert_t.
+
+reduc forall id:Id_t,pk:PK_t,sk:SK_t;
+  checkcert(signcert(id,pk,sk),make_pk(sk)) = (id,pk)
+.
+
+(* Create a certificate *)
+letfun certificate(id:Id_t,pk:PK_t) =
+  signcert(id,pk,SK_CA)
+.
+
+(* Sign a bitstring with a private key *)
+fun sign(bitstring,SK_t): Sig_t.
+reduc forall bs:bitstring, sk:SK_t;
+  checksign(sign(bs,sk),make_pk(sk)) = bs
+.
+
+(* Read certificate contents *)
+reduc forall id:Id_t,pk:PK_t,sk:SK_t;
+  readcert(signcert(id,pk,sk)) = (id,pk)
+.
+
+(* Authenticated encryption/decryption *)
+fun enc(bitstring,K_t): bitstring.
+reduc forall k:K_t, m:bitstring;
+  dec(enc(m,k),k) = m
+.
+
+(* Authentication without encryption *)
+fun auth(bitstring,K_t): bitstring.
+reduc forall k:K_t, m:bitstring;
+  verify(auth(m,k),k) = m
+.
+reduc forall k:K_t, m:bitstring;
+  open(auth(m,k)) = m
+.
+
+(* Diffie-Hellman key exchange *)
+fun DH(e_t,G_t): G_t.
+equation forall x:e_t, y:e_t;
+  DH(y,DH(x,G)) = DH(x,DH(y,G))
+.
+
+(* MAC *)
+fun mac(bitstring,K_t): MAC_t.
+
+(* Hash *)
+fun hash(bitstring): bitstring.
+fun key_hash(PK_t): bitstring.
+fun cert_hash(Cert_t): bitstring.
+
+
+fun toG(bitstring): G_t [typeConverter].
+fun toBS(G_t): bitstring [typeConverter].
+
+(* IKEv2 functions *)
+
+(* IKE header *)
+(* fun HDR(bitstring,bitstring): bitstring [data]. *)
+fun prf(bitstring, G_t): K_t.
+fun prf_plus_h(K_t, bitstring): K_t. (* helper function to allow for different input types for prf *)
+letfun prf_plus(K:K_t,S:bitstring) = 
+       let SK_d = prf_plus_h(K,(S, ONE)) in
+       let SK_aei = prf_plus_h(K,(SK_d, S, TWO)) in
+       let SK_aer = prf_plus_h(K,(SK_aei, S, THREE)) in
+       let SK_pi =  prf_plus_h(K,(SK_aer, S, FOUR)) in
+       let SK_pr =  prf_plus_h(K,(SK_pi, S, FIVE)) in
+       (SK_d, SK_aei, SK_aer, SK_pi, SK_pr).
+
+
+(* ===== EVENTS ===== *)
+
+event DNSUpdate(Id_t,bitstring).
+event HonestDNSUpdate(Id_t,bitstring).
+event CompromiseDomain(Id_t).
+event InitiatorAuth(Id_t, K_t).
+event InitiatorAuthComplete(Id_t, Id_t, K_t).
+event ResponderAuthComplete(Id_t, Id_t, K_t).
+event Test(Id_t).
+
+(* ===== QUERIES ===== *)
+
+(* DNS update sanity check *)
+query domain:Id_t, chash:bitstring; event(DNSUpdate(domain, chash)) ==> event(HonestDNSUpdate(domain, chash)) || event(CompromiseDomain(domain)).
+
+(* Authentication of responder to initiator *)
+query idi,idr:Id_t, key:K_t; event(InitiatorAuthComplete(idi, idr, key)) ==> inj-event(ResponderAuthComplete(idi, idr, key)) || event(CompromiseDomain(idr)).
+query idi,idr,idr':Id_t, key:K_t; event(InitiatorAuthComplete(idi, idr', key)) && inj-event(ResponderAuthComplete(idi, idr, key)) ==> idr'= idr || event(CompromiseDomain(idr)).
+(* Authentication of initiator to responder *)
+query idi,idr:Id_t, key:K_t; event(ResponderAuthComplete(idi, idr, key)) ==> inj-event(InitiatorAuth(idi, key)) || event(CompromiseDomain(idr)).
+
+(* Reachability *)
+query idi,idr:Id_t, key:K_t; event(ResponderAuthComplete(idi, idr, key)) ==> event(CompromiseDomain(idr)).
+query idi,idr:Id_t, key:K_t; event(InitiatorAuthComplete(idi, idr, key)) ==> event(CompromiseDomain(idr)).
+
+(* query domain:Id_t; event(Test(domain)) ==> event(CompromiseDomain(domain)). *)
+
+
+(* ===== PROCESSES ===== *)
+
+let initiator(dns_pk:PK_t, IDi:Id_t, ski:SK_t) = 
+    in(c, IPSECKEY_record:Sig_t);
+    let (IDr:Id_t, =IPSECKEY, chash:bitstring) = checksign(IPSECKEY_record, dns_pk) in
+    
+
+    (* IKE_SA_INIT *)
+    new SPIi:bitstring;
+    let HDR = (SPIi, ZERO) in
+    let SAi1 = ALGOS in
+    new x:e_t;
+    let KEi = DH(x, G) in
+    new Ni:Random_t;
+    out(c, (HDR, SAi1, KEi, Ni));
+
+    in(c, responder_SA_init: bitstring);
+    let (HDR: bitstring, SAr1:bitstring, KEr:G_t, Nr:Random_t) = responder_SA_init in
+    let (=SPIi, SPIr:bitstring) = HDR in
+
+    (* Key derivation *)
+    let SKEYSEED = prf((Ni, Nr), DH(x, KEr)) in
+    (* SK_d used for deriving new keys, SK_aex for authenticated encryption-they are two separate keys in the standard but I made them one key here, SK_px for generating AUTH payload *)
+    let (SK_d:K_t, SK_aei:K_t, SK_aer:K_t, SK_pi:K_t, SK_pr:K_t) = prf_plus(SKEYSEED, (Ni, Nr, SPIi, SPIr)) in 
+
+    (* IKE_AUTH *)
+    (* Question, is IKEv2 susceptible to selfie? *)
+    let AUTH = sign((HDR, SAi1, KEi, Ni, Nr, mac((IDi, ZERO), SK_pi)), ski) in
+    let SAi2 = ALGOS in
+    let TSi = SRC_IP in
+    let TSr = DEST_IP in
+    event InitiatorAuth(IDi, SKEYSEED);
+    out(c, (HDR, enc((IDi, IDr, AUTH, SAi2, TSi, TSr), SK_aei)));
+
+    in(c, responder_IKE_auth:bitstring);
+    let (=HDR, responder_IKE_auth:bitstring) = responder_IKE_auth in
+    let (=IDr, ss_cert:Cert_t, AUTH:Sig_t, SAr2:bitstring, =SRC_IP, =DEST_IP) = dec(responder_IKE_auth, SK_aer) in
+
+
+    let (_:bitstring, pkr:PK_t) = readcert(ss_cert) in
+    (* Check self-signed certificate *)
+    let (=IDr, =pkr) = checkcert(ss_cert, pkr) in
+    (* Check cert matches TLSA record contents *)
+    if chash = cert_hash(ss_cert) then
+
+    let (=HDR, =SAr1, =KEr, =Nr, =Ni, IDr_mac:MAC_t) = checksign(AUTH, pkr) in
+    if IDr_mac = mac((IDr, ZERO), SK_pr) then
+    event InitiatorAuthComplete(IDi, IDr, SKEYSEED);
+    0.
+
+
+let responder(IDr:Id_t, skr:SK_t) = 
+
+    let pkr = make_pk(skr) in
+    let ss_cert = signcert(IDr, pkr, skr) in 
+
+    (* IKE_SA_INIT *)
+    in(c, initiator_SA_init:bitstring);
+    let (HDR: bitstring, SAi1:bitstring, KEi:G_t, Ni:Random_t) = initiator_SA_init in
+    let (SPIi:bitstring, =ZERO) = HDR in
+
+    new SPIr:bitstring;
+    let HDR = (SPIi, SPIr) in
+    let SAr1 = ALGOS in
+    new y:e_t;
+    let KEr = DH(y, G) in
+    new Nr:Random_t;
+    out(c, (HDR, SAr1, KEr, Nr));
+
+    (* Key derivation *)
+    let SKEYSEED = prf((Ni, Nr), DH(y, KEi)) in
+    (* SK_d used for deriving new keys, SK_aex for authenticated encryption, SK_px for generating AUTH payload *)
+    let (SK_d:K_t, SK_aei:K_t, SK_aer:K_t, SK_pi:K_t, SK_pr:K_t) = prf_plus(SKEYSEED, (Ni, Nr, SPIi, SPIr)) in 
+    
+
+    (* IKE_AUTH *)
+    in(c, initiator_IKE_auth:bitstring);
+    let (=HDR, initiator_IKE_auth:bitstring) = initiator_IKE_auth in
+    let (IDi:Id_t, IDri:Id_t, AUTH:Sig_t, SAi2:bitstring, =SRC_IP, =DEST_IP) = dec(initiator_IKE_auth, SK_aei) in
+    (* Assuming pre-configured keys *)
+    get trusted_clients(=IDi, pki:PK_t) in 
+    let (=HDR, =SAi1, =KEi, =Ni, =Nr, IDi_mac:MAC_t) = checksign(AUTH, pki) in
+    if IDi_mac = mac((IDi, ZERO), SK_pi) then
+    (* No check if IDr matches... *)
+    let AUTH = sign((HDR, SAr1, KEr, Nr, Ni, mac((IDri, ZERO), SK_pr)), skr) in
+    let SAr2 = ALGOS in
+    let TSi = SRC_IP in
+    let TSr = DEST_IP in
+    event ResponderAuthComplete(IDi, IDr, SKEYSEED);
+    out(c, (HDR, enc((IDri, ss_cert, AUTH, SAr2, TSi, TSr), SK_aer))); (* Sending IDri instead of IDr *)
+    0.
+
+
+let responder_init() = 
+
+    (* Create trusted_domains, domain can have many PKs *)
+    !( 
+      new domain: Id_t; out(c, domain);
+      new credentials: K_t; 
+      insert trusted_domains(domain, credentials);
+      (* Honest registration of raw public keys to domains in DNS *)
+       !( new sk:SK_t; let rpk = make_pk(sk) in out(c, rpk);
+      let ss_cert = signcert(domain, rpk, sk) in 
+      let dns_update = (domain, IPSECKEY, cert_hash(ss_cert)) in
+      event HonestDNSUpdate(domain, cert_hash(ss_cert));
+      out(c, auth(dns_update, credentials));
+      (* Launch responders *)
+      !responder(domain, sk) )
+      | 
+      ( event CompromiseDomain(domain); out(c, credentials) )
+    ).
+
+
+
+let initiator_init(dns_pk:PK_t) = 
+
+    (* Create key pairs, each client id maps to one secret key *)
+    !( new id:Id_t; 
+      new sk:SK_t; let pk = make_pk(sk) in out(c, pk);
+      insert trusted_clients(id, pk);
+      !initiator(dns_pk, id, sk)
+      ).
+
+
+
+let dns(dns_sk:SK_t, dns_pk:PK_t) = 
+    in(c, IPSECKEY_update_record: bitstring);
+    let (domain:Id_t, =IPSECKEY, chash:bitstring) = open(IPSECKEY_update_record) in
+    get trusted_domains(=domain, credentials:K_t) in
+    let (=domain, =IPSECKEY, =chash) = verify(IPSECKEY_update_record, credentials) in
+    event DNSUpdate(domain, chash);
+    out(c, sign((domain, IPSECKEY, chash), dns_sk));
+    0.
+
+process 
+    new dns_sk:SK_t;
+    let dns_pk = make_pk(dns_sk) in
+    out(c, dns_pk);
+
+    !dns(dns_sk, dns_pk) | !initiator_init(dns_pk) | !responder_init() 
