@@ -124,6 +124,7 @@ query domain:Id_t, rpk:PK_t; event(DNSUpdate(domain, key_hash(rpk))) ==> event(H
 
 (* Authentication of server to client *)
 query domain:Id_t, rpk:PK_t, ms:K_t; event(ClientFinished(domain, rpk, ms)) ==> inj-event(ServerFinished(domain, rpk, ms)) || event(CompromiseDomain(domain)).
+(* Check agreement on server name (catches potential redirection vulnerability) *)
 query server_domain,server_domain':Id_t, rpk:PK_t, ms:K_t; event(ServerComplete(server_domain, rpk, ms)) && event(ClientFinished(server_domain', rpk, ms)) ==>  server_domain=server_domain' || event(CompromiseDomain(server_domain)).
 (* Authentication of client to server *)
 query domain:Id_t, rpk:PK_t, ms:K_t; event(ServerComplete(domain, rpk, ms)) ==> inj-event(ClientFinished(domain, rpk, ms)) || event(CompromiseDomain(domain)).

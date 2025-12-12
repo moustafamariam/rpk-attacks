@@ -122,6 +122,7 @@ query domain:Id_t, rpk:PK_t; event(DNSUpdate(domain, key_hash(rpk))) ==> event(H
 
 (* Authentication of server to client *)
 query client_id,server_domain:Id_t, key:G_t; event(ClientKEXComplete(client_id, server_domain, key)) ==> inj-event(ServerKEXReply(server_domain, key)) || event(CompromiseDomain(server_domain)).
+(* Check agreement on server name (catches potential redirection vulnerability) *)
 query client_id,server_domain, server_domain':Id_t, key:G_t; event(ServerKEXReply(server_domain, key)) && event(ClientKEXComplete(client_id, server_domain', key)) ==> server_domain=server_domain' || event(CompromiseDomain(server_domain)).
 
 (* Reachability *)

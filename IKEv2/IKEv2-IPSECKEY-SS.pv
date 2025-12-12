@@ -140,6 +140,7 @@ query domain:Id_t, chash:bitstring; event(DNSUpdate(domain, chash)) ==> event(Ho
 
 (* Authentication of responder to initiator *)
 query idi,idr:Id_t, key:K_t; event(InitiatorAuthComplete(idi, idr, key)) ==> inj-event(ResponderAuthComplete(idi, idr, key)) || event(CompromiseDomain(idr)).
+(* Check agreement on server name (catches potential redirection vulnerability) *)
 query idi,idr,idr':Id_t, key:K_t; event(InitiatorAuthComplete(idi, idr', key)) && inj-event(ResponderAuthComplete(idi, idr, key)) ==> idr'= idr || event(CompromiseDomain(idr)).
 (* Authentication of initiator to responder *)
 query idi,idr:Id_t, key:K_t; event(ResponderAuthComplete(idi, idr, key)) ==> inj-event(InitiatorAuth(idi, key)) || event(CompromiseDomain(idr)).
