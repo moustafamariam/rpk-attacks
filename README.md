@@ -2,7 +2,7 @@
 
 # About
 ---
-This repository contains the ProVerif models of the SSH, IPsec, and TLS protocols discussed in our paper "Attacks on Key Ownership in Common Security Protocols". The ProVerif models show the attack that can happen when no proper proof-of-possession is done before, during, or after the protocol. 
+This repository contains the artefacts associated with our paper "Attacks on Key Ownership in Security Protocols". A documentation of how the proof of concept attacks were carried out in our testbed can be found in [attacks-PoC.md](attacks-PoC.md). The ProVerif models of the SSH, IPsec, and TLS protocols that also confirm the redirection attacks as well as the proposed solutions can be found in the protocol's corresponding folder name. The ProVerif models show that the attacks can happen when no proper proof-of-possession is done before, during, or after the protocol. 
 
 # Models
 ---
