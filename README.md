@@ -28,3 +28,32 @@ This repository contains the artefacts associated with our paper "Attacks on Key
 
 ### Attack traces
 - The [attack-traces](attack-traces/) folder contains the attacks detected by Proverif for the protocols. ProVerif was able to find attack traces for the attacks implemented in the paper.
+
+
+# Citation
+---
+
+If you find this work useful in any way for your research, please cite our paper:
+
+**Text:**
+
+```text
+M. Moustafa, M. Sethi, and T. Aura, "Attacks on Key Ownership in Security Protocols," in Computer Security – ESORICS 2026, 
+Lecture Notes in Computer Science, Springer Nature Switzerland, 2026, pp. 439–459. doi: 10.1007/978-3-032-38695-3_22
+```
+
+**BibTeX:**
+
+```bibtex
+@inproceedings{moustafa2026keyownership,
+  title     = {Attacks on Key Ownership in Security Protocols},
+  author    = {Moustafa, Mariam and Sethi, Mohit and Aura, Tuomas},
+  booktitle = {Computer Security -- ESORICS 2026},
+  series    = {Lecture Notes in Computer Science},
+  pages     = {439--459},
+  year      = {2026},
+  publisher = {Springer Nature Switzerland},
+  doi       = {10.1007/978-3-032-38695-3_22},
+  url       = {https://doi.org/10.1007/978-3-032-38695-3_22}
+}
+```
